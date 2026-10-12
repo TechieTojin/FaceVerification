@@ -32,3 +32,16 @@ __pycache__/
 # OS
 Thumbs.db
 .DS_Store
+
+# Frontend
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+
+# SQLite databases
+*.db
+*.db-wal
+*.db-shm
+
+# Backend test artifacts
+test_*.db
