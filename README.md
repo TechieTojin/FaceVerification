@@ -1,27 +1,104 @@
-# Face Verification System
+# FaceVerification
 
-This is a face verification system implemented in Python using **OpenCV** for real-time video capture and **DeepFace** for face recognition. The system compares the real-time captured face with a reference image to verify if they match. It can be used for authentication systems, security systems, or any application requiring face recognition.
+Real-time face verification using a webcam and a reference image. Displays **MATCH** or **NOT A MATCH** on the live video feed.
 
-## Features
-- Real-time video capture using OpenCV.
-- Face recognition using DeepFace.
-- Displays "MATCH" or "NOT A MATCH" based on face verification.
-- Can be customized with a different reference image for different users.
+---
 
-## Requirements
+## Quick start (Windows)
 
-- Python 3.x
-- OpenCV
-- DeepFace
-- Keras
-- TensorFlow
+### 1. Clone and enter the project
 
-### Install Required Libraries
+```powershell
+git clone https://github.com/TechieTojin/FaceVerification.git
+cd FaceVerification
+git checkout feature/faceverification-modernization
+```
 
-You can install the required libraries using `pip`:
+### 2. Create a virtual environment and install dependencies
 
-```bash
-pip install opencv-python
-pip install deepface
-pip install keras
-pip install tensorflow
+```powershell
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+```
+
+> **First run:** ArcFace model weights (~137 MB) are downloaded automatically from the internet.
+
+### 3. Configure the reference image
+
+```powershell
+Copy-Item .env.example .env
+```
+
+Edit `.env` and set the path to a clear, well-lit photo of the person to verify:
+
+```
+REFERENCE_IMAGE_PATH=C:\Users\YourName\Pictures\your_face.jpg
+```
+
+### 4. Run
+
+```powershell
+python face_verification.py
+```
+
+Or pass the reference image directly:
+
+```powershell
+python face_verification.py --reference "C:\path\to\photo.jpg"
+```
+
+Press **Q** or **ESC** in the video window to quit.
+
+---
+
+## Configuration
+
+All settings can be set in `.env` or passed as CLI arguments.
+
+| Environment variable | CLI flag | Default | Description |
+|---|---|---|---|
+| `REFERENCE_IMAGE_PATH` | `--reference` / `-r` | *(required)* | Path to the reference face image |
+| `CAMERA_INDEX` | `--camera` / `-c` | `0` | Camera device index |
+| `FACE_MODEL` | — | `ArcFace` | DeepFace model (`ArcFace`, `VGG-Face`, `Facenet512`, `SFace`) |
+| `DETECTOR_BACKEND` | — | `opencv` | Face detector (`opencv`, `retinaface`, `ssd`) |
+
+---
+
+## Run tests
+
+```powershell
+.\.venv\Scripts\pytest tests/ -v
+```
+
+---
+
+## Project files
+
+| File | Purpose |
+|---|---|
+| `face_verification.py` | Main application (v1.1) |
+| `face-recognition.py` | Original prototype (preserved) |
+| `requirements.txt` | Pinned dependencies |
+| `.env.example` | Configuration template |
+| `tests/` | Unit tests (pytest) |
+| `docs/` | Technical documentation |
+
+---
+
+## Technology
+
+- **OpenCV 4.10** — webcam capture and display
+- **DeepFace 0.0.102** — face verification (ArcFace model by default)
+- **python-dotenv** — `.env` configuration loading
+
+---
+
+## Limitations (v1.1)
+
+- No liveness detection — a printed photo of the reference person may produce a match
+- Inference runs every 5 frames; the display updates every frame
+- Single reference image per session
+- No multi-user support
+
+See [`docs/IMPROVEMENT_ROADMAP.md`](docs/IMPROVEMENT_ROADMAP.md) for the planned improvements.

@@ -1,12 +1,15 @@
-# FaceVerification dependencies
-# Tested on Python 3.10, Windows 11
-# Install with: pip install -r requirements.txt
-# IMPORTANT: numpy must be pinned to <2.0 for TensorFlow 2.15 compatibility
+# FaceVerification v1.1 — verified working dependencies
+# Python 3.10, Windows 11
+# Install: pip install -r requirements.txt
+# NOTE: deepface 0.0.102 no longer requires TensorFlow for its lightweight backend.
+#       The ArcFace model weights (~137 MB) are downloaded automatically on first run.
 
+deepface==0.0.102
 opencv-python==4.10.0.84
-numpy==1.26.4
-tensorflow==2.15.0
-tf-keras==2.15.1
-deepface==0.0.93
+numpy==2.2.6
 pillow==10.4.0
-python-dotenv==1.0.1
+python-dotenv==1.2.4
+protobuf==7.36.2
+
+# Testing
+pytest==9.1.1
