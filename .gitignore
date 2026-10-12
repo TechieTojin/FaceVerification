@@ -1,0 +1,47 @@
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Environment config (contains sensitive paths)
+.env
+
+# DeepFace model weights
+.deepface/
+
+# Reference images (biometric data — never commit)
+reference/
+*.jpg
+*.jpeg
+*.png
+*.bmp
+
+# Python cache
+__pycache__/
+*.py[cod]
+*.pyo
+
+# pytest
+.pytest_cache/
+*.egg-info/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+Thumbs.db
+.DS_Store
+
+# Frontend
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+
+# SQLite databases
+*.db
+*.db-wal
+*.db-shm
+
+# Backend test artifacts
+test_*.db
