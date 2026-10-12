@@ -70,14 +70,15 @@ def create_user(db: Session, email: str, full_name: str, password: str, role: Ro
 
 
 def seed_admin(db: Session) -> None:
-    """Create default admin user if no users exist."""
+    """Create default admin user if no users exist. Credentials come from settings."""
+    from backend.config import settings
     count = db.query(User).count()
     if count == 0:
         admin = create_user(
             db,
-            email="admin@faceverification.local",
-            full_name="System Administrator",
-            password="Admin1234!",
+            email=settings.initial_admin_email,
+            full_name=settings.initial_admin_name,
+            password=settings.initial_admin_password,
             role=RoleEnum.ADMIN,
         )
         log.warning("Default admin created: %s — CHANGE THIS PASSWORD IN PRODUCTION!", admin.email)

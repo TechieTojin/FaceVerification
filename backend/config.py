@@ -31,6 +31,11 @@ class Settings(BaseSettings):
     session_timeout_seconds: int = 120
     max_attempts_per_session: int = 5
 
+    # Initial admin seed (used only when no users exist in the DB)
+    initial_admin_email: str = "admin@faceverification.local"
+    initial_admin_password: str = "Admin1234!"
+    initial_admin_name: str = "System Administrator"
+
     # CORS
     cors_origins: list[str] = ["http://localhost:5173", "http://localhost:3000"]
 

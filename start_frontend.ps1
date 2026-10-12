@@ -18,4 +18,5 @@ Write-Host "  Backend must be running on port 8000" -ForegroundColor Yellow
 Write-Host "  Press Ctrl+C to stop" -ForegroundColor Yellow
 
 Set-Location $frontend
-npm run dev
+# Use .cmd wrapper — npm.ps1 cannot be used as a Start-Process target on Windows
+& ".\node_modules\.bin\vite.cmd" --port 5173
