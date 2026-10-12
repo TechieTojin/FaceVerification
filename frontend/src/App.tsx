@@ -25,7 +25,7 @@ const queryClient = new QueryClient({
  * This replaces the old localStorage-based persistence.
  */
 function SessionRestorer() {
-  const { setUser, setLoading, logout } = useAuthStore();
+  const { setUser, logout } = useAuthStore();
 
   useEffect(() => {
     api.get('/auth/me')
