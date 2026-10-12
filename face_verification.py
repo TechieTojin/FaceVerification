@@ -40,7 +40,7 @@ from app.logging_config import setup_logging
 from app.camera import CameraManager
 from app.state_manager import StateManager, VerificationResult, VerificationState
 from app.inference_worker import InferenceWorker
-from app.overlay import draw_overlay
+from app.overlay import draw_overlay as _draw_overlay_v13
 
 WINDOW_NAME = "FaceVerification"
 
@@ -231,7 +231,7 @@ def run(config: AppConfig) -> None:
                 fps_start = time.monotonic()
 
             # Draw and display
-            draw_overlay(
+            _draw_overlay_v13(
                 frame,
                 state_mgr.current_result,
                 fps,
