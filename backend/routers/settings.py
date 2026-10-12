@@ -1,6 +1,6 @@
-"""System settings router."""
+"""System settings router — v2.1 with floor/ceiling validation."""
 from __future__ import annotations
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from datetime import datetime
 
@@ -19,11 +19,51 @@ DEFAULT_SETTINGS = {
     "max_attempts_per_session": ("5", "Maximum frame submissions per session"),
 }
 
+# (min, max) inclusive ranges — enforce floor to prevent security misconfig
+_FLOAT_BOUNDS: dict[str, tuple[float, float]] = {
+    "max_face_distance": (0.1, 1.0),
+    "min_face_quality": (0.1, 1.0),
+}
+_INT_BOUNDS: dict[str, tuple[int, int]] = {
+    "session_timeout_seconds": (30, 3600),
+    "max_attempts_per_session": (3, 50),
+}
+_BOOL_KEYS = {"enable_liveness"}
 
-def _ensure_defaults(db: Session):
+
+def _validate_setting(key: str, value: str) -> str:
+    """Validate and normalise a setting value. Raises HTTPException on bad input."""
+    if key in _BOOL_KEYS:
+        if value.lower() not in ("true", "false", "1", "0"):
+            raise HTTPException(status_code=422, detail=f"{key}: must be 'true' or 'false'")
+        return "true" if value.lower() in ("true", "1") else "false"
+
+    if key in _FLOAT_BOUNDS:
+        try:
+            v = float(value)
+        except ValueError:
+            raise HTTPException(status_code=422, detail=f"{key}: must be a number")
+        lo, hi = _FLOAT_BOUNDS[key]
+        if not (lo <= v <= hi):
+            raise HTTPException(status_code=422, detail=f"{key}: must be between {lo} and {hi}")
+        return str(v)
+
+    if key in _INT_BOUNDS:
+        try:
+            v = int(value)
+        except ValueError:
+            raise HTTPException(status_code=422, detail=f"{key}: must be an integer")
+        lo, hi = _INT_BOUNDS[key]
+        if not (lo <= v <= hi):
+            raise HTTPException(status_code=422, detail=f"{key}: must be between {lo} and {hi}")
+        return str(v)
+
+    return str(value)
+
+
+def _ensure_defaults(db: Session) -> None:
     for key, (value, description) in DEFAULT_SETTINGS.items():
-        existing = db.query(SystemSettings).filter(SystemSettings.key == key).first()
-        if not existing:
+        if not db.query(SystemSettings).filter(SystemSettings.key == key).first():
             db.add(SystemSettings(key=key, value=value, description=description))
     db.commit()
 
@@ -34,8 +74,15 @@ def get_settings(
     current_user: User = Depends(get_current_user),
 ):
     _ensure_defaults(db)
-    settings = db.query(SystemSettings).all()
-    return {s.key: {"value": s.value, "description": s.description, "updated_at": s.updated_at.isoformat() if s.updated_at else None} for s in settings}
+    rows = db.query(SystemSettings).all()
+    return {
+        s.key: {
+            "value": s.value,
+            "description": s.description,
+            "updated_at": s.updated_at.isoformat() if s.updated_at else None,
+        }
+        for s in rows
+    }
 
 
 @router.put("")
@@ -45,14 +92,18 @@ def update_settings(
     current_user: User = Depends(require_admin),
 ):
     _ensure_defaults(db)
+    unknown = [k for k in data if k not in DEFAULT_SETTINGS]
+    if unknown:
+        raise HTTPException(status_code=422, detail=f"Unknown settings keys: {unknown}")
+
     updated = {}
-    for key, value in data.items():
-        if key in DEFAULT_SETTINGS:
-            setting = db.query(SystemSettings).filter(SystemSettings.key == key).first()
-            if setting:
-                setting.value = str(value)
-                setting.updated_by = current_user.id
-                setting.updated_at = datetime.utcnow()
-                updated[key] = str(value)
+    for key, raw_value in data.items():
+        validated = _validate_setting(key, str(raw_value))
+        setting = db.query(SystemSettings).filter(SystemSettings.key == key).first()
+        if setting:
+            setting.value = validated
+            setting.updated_by = current_user.id
+            setting.updated_at = datetime.utcnow()
+            updated[key] = validated
     db.commit()
     return {"updated": updated, "message": f"Updated {len(updated)} settings"}

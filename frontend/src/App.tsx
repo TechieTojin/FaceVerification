@@ -1,7 +1,8 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { useAuthStore } from './store/authStore';
+import api from './api/client';
 import Layout from './components/Layout';
 import Login from './pages/Login';
 import Dashboard from './pages/Dashboard';
@@ -19,8 +20,36 @@ const queryClient = new QueryClient({
   },
 });
 
+/**
+ * On mount, call /auth/me to restore the session from the HttpOnly cookie.
+ * This replaces the old localStorage-based persistence.
+ */
+function SessionRestorer() {
+  const { setUser, setLoading, logout } = useAuthStore();
+
+  useEffect(() => {
+    api.get('/auth/me')
+      .then((r) => setUser(r.data))
+      .catch(() => {
+        logout();
+      });
+  }, []);   // eslint-disable-line react-hooks/exhaustive-deps
+
+  return null;
+}
+
 const ProtectedRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const { isAuthenticated } = useAuthStore();
+  const { isAuthenticated, isLoading } = useAuthStore();
+
+  if (isLoading) {
+    // Avoid flashing /login while the initial /me check is in flight
+    return (
+      <div className="min-h-screen bg-slate-900 flex items-center justify-center">
+        <div className="text-slate-400 text-sm">Loading…</div>
+      </div>
+    );
+  }
+
   if (!isAuthenticated) return <Navigate to="/login" replace />;
   return <>{children}</>;
 };
@@ -29,6 +58,7 @@ const App: React.FC = () => {
   return (
     <QueryClientProvider client={queryClient}>
       <BrowserRouter>
+        <SessionRestorer />
         <Routes>
           <Route path="/login" element={<Login />} />
           <Route

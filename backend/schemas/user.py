@@ -1,6 +1,6 @@
 """User request/response schemas."""
 from __future__ import annotations
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict
 from typing import Optional
 from datetime import datetime
 from backend.models.user import RoleEnum
@@ -20,6 +20,8 @@ class UserUpdate(BaseModel):
 
 
 class UserResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     id: str
     email: str
     full_name: str
@@ -29,9 +31,6 @@ class UserResponse(BaseModel):
     updated_at: datetime
     last_login_at: Optional[datetime] = None
     has_enrolment: bool = False
-
-    class Config:
-        from_attributes = True
 
 
 class UserListResponse(BaseModel):

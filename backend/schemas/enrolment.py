@@ -1,6 +1,6 @@
 """Enrolment request/response schemas."""
 from __future__ import annotations
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 from typing import Optional
 from datetime import datetime
 
@@ -20,8 +20,7 @@ class EnrolmentResponse(BaseModel):
     is_active: bool
     model_name: str
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class EnrolmentStatus(BaseModel):

@@ -5,25 +5,30 @@ import api from '../api/client';
 import { useAuthStore } from '../store/authStore';
 
 const Login: React.FC = () => {
-  const [email, setEmail] = useState('admin@faceverification.local');
+  const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const navigate = useNavigate();
-  const { setToken, setUser } = useAuthStore();
+  const { setUser } = useAuthStore();
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
     setLoading(true);
     try {
-      const loginResp = await api.post('/auth/login', { email, password });
-      setToken(loginResp.data.access_token);
-      const meResp = await api.get('/auth/me');
-      setUser(meResp.data);
+      // Login sets fv_access, fv_refresh, fv_csrf cookies.
+      // The response body also contains the user; we use that directly.
+      const resp = await api.post('/auth/login', { email, password });
+      setUser(resp.data.user);
       navigate('/');
-    } catch (err: any) {
-      setError(err.response?.data?.detail || 'Login failed');
+    } catch (err: unknown) {
+      const axiosErr = err as { response?: { status?: number; data?: { detail?: string } } };
+      if (axiosErr.response?.status === 429) {
+        setError(axiosErr.response.data?.detail ?? 'Too many attempts. Please wait before trying again.');
+      } else {
+        setError(axiosErr.response?.data?.detail ?? 'Login failed');
+      }
     } finally {
       setLoading(false);
     }
@@ -36,7 +41,7 @@ const Login: React.FC = () => {
           <ShieldCheck className="text-blue-400" size={32} />
           <div>
             <h1 className="text-xl font-bold text-white">FaceVerification AI</h1>
-            <p className="text-slate-400 text-sm">Biometric Identity Platform 2.0</p>
+            <p className="text-slate-400 text-sm">Biometric Identity Platform 2.1</p>
           </div>
         </div>
 
@@ -48,6 +53,7 @@ const Login: React.FC = () => {
               value={email}
               onChange={e => setEmail(e.target.value)}
               className="w-full bg-slate-700 border border-slate-600 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-blue-500"
+              autoComplete="username"
               required
             />
           </div>
@@ -58,6 +64,7 @@ const Login: React.FC = () => {
               value={password}
               onChange={e => setPassword(e.target.value)}
               className="w-full bg-slate-700 border border-slate-600 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-blue-500"
+              autoComplete="current-password"
               required
             />
           </div>
@@ -71,13 +78,9 @@ const Login: React.FC = () => {
             disabled={loading}
             className="w-full bg-blue-600 hover:bg-blue-700 text-white rounded-lg py-2 text-sm font-medium transition-colors disabled:opacity-50"
           >
-            {loading ? 'Signing in...' : 'Sign In'}
+            {loading ? 'Signing in…' : 'Sign In'}
           </button>
         </form>
-
-        <p className="text-center text-slate-500 text-xs mt-6">
-          Default: admin@faceverification.local
-        </p>
       </div>
     </div>
   );
