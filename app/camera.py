@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import platform
 import sys
 
 import cv2
@@ -20,7 +21,9 @@ class CameraManager:
 
     def open(self) -> cv2.VideoCapture:
         """Open the camera; raises SystemExit on failure."""
-        cap = cv2.VideoCapture(self._index)
+        # On Windows, CAP_DSHOW avoids a 4+ second backend enumeration delay.
+        backend = cv2.CAP_DSHOW if platform.system() == "Windows" else cv2.CAP_ANY
+        cap = cv2.VideoCapture(self._index, backend)
         if not cap.isOpened():
             log.error(
                 "Cannot open camera (index %d). "
