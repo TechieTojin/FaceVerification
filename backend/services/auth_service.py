@@ -70,8 +70,14 @@ def create_user(db: Session, email: str, full_name: str, password: str, role: Ro
 
 
 def seed_admin(db: Session) -> None:
-    """Create default admin user if no users exist. Credentials come from settings."""
+    """Create default admin user if no users exist. Credentials come from settings/env."""
     from backend.config import settings
+    if not settings.initial_admin_password:
+        log.warning(
+            "INITIAL_ADMIN_PASSWORD is not set in .env — skipping admin seed. "
+            "Set it and restart to create the first admin account."
+        )
+        return
     count = db.query(User).count()
     if count == 0:
         admin = create_user(

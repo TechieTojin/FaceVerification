@@ -56,7 +56,7 @@ cd frontend && npm run dev
 ### 8. Open the app
 - Frontend: http://localhost:5173
 - API docs: http://localhost:8000/docs
-- Login: admin@faceverification.local / Admin1234!
+- Login with the email and password you configured in `INITIAL_ADMIN_EMAIL` / `INITIAL_ADMIN_PASSWORD` in your `.env` file.
 
 ## Running Tests
 

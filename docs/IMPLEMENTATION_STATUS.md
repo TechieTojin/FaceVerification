@@ -108,5 +108,5 @@ cd frontend && npm run dev
 
 ### Default Admin Credentials
 - Email: `admin@faceverification.local`
-- Password: `Admin1234!`
+- Password: configured via `INITIAL_ADMIN_PASSWORD` in `.env`
 - **CHANGE THIS IN PRODUCTION**

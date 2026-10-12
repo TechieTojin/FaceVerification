@@ -1,6 +1,7 @@
 """Pytest fixtures for backend tests."""
 from __future__ import annotations
 import pytest
+from backend.config import settings
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
@@ -65,7 +66,7 @@ def client(db_session):
 def admin_token(client):
     resp = client.post("/api/v1/auth/login", json={
         "email": "admin@faceverification.local",
-        "password": "Admin1234!",
+        "password": settings.initial_admin_password,
     })
     assert resp.status_code == 200, f"Login failed ({resp.status_code}): {resp.text}"
     return resp.json()["access_token"]

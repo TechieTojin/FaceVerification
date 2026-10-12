@@ -1,12 +1,13 @@
 """Tests for authentication endpoints."""
 from __future__ import annotations
 import pytest
+from backend.config import settings
 
 
 def test_login_success(client):
     resp = client.post("/api/v1/auth/login", json={
-        "email": "admin@faceverification.local",
-        "password": "Admin1234!",
+        "email": settings.initial_admin_email,
+        "password": settings.initial_admin_password,
     })
     assert resp.status_code == 200
     data = resp.json()
