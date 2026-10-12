@@ -82,12 +82,27 @@ class Settings(BaseSettings):
         return self
 
     def get_fernet_key(self) -> bytes:
-        from cryptography.fernet import Fernet
-        if self.embedding_encryption_key:
-            key = self.embedding_encryption_key.encode()
-            if len(key) == 44:
-                return key
-        return Fernet.generate_key()
+        """Return the Fernet key bytes, or raise RuntimeError if not configured.
+
+        A valid Fernet key is exactly 44 base64-url characters.  We never fall
+        back to a randomly-generated key: an ephemeral key would encrypt embeddings
+        that become permanently unreadable after a restart, which is silent data
+        loss.  The caller must set EMBEDDING_ENCRYPTION_KEY in .env.
+        """
+        if not self.embedding_encryption_key:
+            raise RuntimeError(
+                "EMBEDDING_ENCRYPTION_KEY is not set. "
+                "Generate one: python -c \"from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())\" "
+                "and add it to .env before enrolling users."
+            )
+        key = self.embedding_encryption_key.encode()
+        if len(key) != 44:
+            raise RuntimeError(
+                f"EMBEDDING_ENCRYPTION_KEY has invalid length ({len(key)} chars); "
+                "a Fernet key must be exactly 44 base64-url characters. "
+                "Regenerate with: python -c \"from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())\""
+            )
+        return key
 
 
 settings = Settings()

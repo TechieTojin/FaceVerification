@@ -339,3 +339,41 @@ def test_enable_liveness_cannot_be_disabled_silently(client, auth_headers):
         headers=auth_headers,
     )
     assert resp.status_code == 422
+
+
+# ── Embedding encryption key validation ──────────────────────────────────────
+
+def test_fernet_key_missing_raises():
+    """get_fernet_key() raises RuntimeError when EMBEDDING_ENCRYPTION_KEY is unset."""
+    from backend.config import Settings
+    s = Settings.model_construct(
+        secret_key="test-only-secret-key-not-for-production-32ch!!",
+        embedding_encryption_key="",
+    )
+    with pytest.raises(RuntimeError, match="EMBEDDING_ENCRYPTION_KEY is not set"):
+        s.get_fernet_key()
+
+
+def test_fernet_key_invalid_length_raises():
+    """get_fernet_key() raises RuntimeError when key length is not 44 chars."""
+    from backend.config import Settings
+    s = Settings.model_construct(
+        secret_key="test-only-secret-key-not-for-production-32ch!!",
+        embedding_encryption_key="tooshort",
+    )
+    with pytest.raises(RuntimeError, match="invalid length"):
+        s.get_fernet_key()
+
+
+def test_fernet_key_valid_returns_bytes():
+    """get_fernet_key() returns the raw bytes of a valid 44-char key."""
+    from cryptography.fernet import Fernet
+    from backend.config import Settings
+    valid = Fernet.generate_key().decode()
+    s = Settings.model_construct(
+        secret_key="test-only-secret-key-not-for-production-32ch!!",
+        embedding_encryption_key=valid,
+    )
+    result = s.get_fernet_key()
+    assert result == valid.encode()
+    assert len(result) == 44
