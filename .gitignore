@@ -45,3 +45,29 @@ frontend/.vite/
 
 # Backend test artifacts
 test_*.db
+
+# v3: model files are downloaded by scripts/fetch_models.py — never commit weights
+models/
+*.task
+*.onnx
+*.h5
+*.pth
+frontend/public/models/
+frontend/public/mediapipe/
+
+# v3: automatic pre-migration database backups (may contain encrypted templates)
+backups/
+
+# v3: frontend build / test artifacts
+frontend/dist-e2e/
+frontend/test-results/
+frontend/playwright-report/
+frontend/e2e/.auth/
+frontend/e2e/.artifacts/
+.e2e/
+
+# v4: offline kiosk local data (keys, encrypted templates, audit queue) and SDK build output
+kiosk_data/
+**/kiosk_data/
+sdk/typescript/node_modules/
+sdk/typescript/dist/

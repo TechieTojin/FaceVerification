@@ -1,148 +1,145 @@
-import React, { useState } from 'react';
-import { Plus, Search, UserX } from 'lucide-react';
-import { useUsers, useCreateUser, useDisableUser } from '../api/hooks';
+import { useState, type FormEvent } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { useQueryClient } from '@tanstack/react-query';
+import { Plus, Search, Users as UsersIcon } from 'lucide-react';
+import { api, apiError } from '../lib/api';
+import { useApi } from '../lib/query';
+import { fmtRelative, humanize } from '../lib/format';
+import type { Role, UserList } from '../lib/types';
+import { useCan } from '../store/auth';
+import { toast } from '../store/toast';
+import { Button } from '../components/ui/Button';
+import { Badge, Callout, Card, EmptyState, LoadingBlock, PageHeader } from '../components/ui/primitives';
+import { Field, Input, Select } from '../components/ui/form';
+import { Modal } from '../components/ui/Modal';
+import { Pagination, Table, Td, Th, THead, Tr } from '../components/ui/Table';
+import { useDebounced } from '../components/UserPicker';
 
-const Users: React.FC = () => {
+export default function Users() {
+  const can = useCan();
+  const navigate = useNavigate();
   const [search, setSearch] = useState('');
-  const [showCreate, setShowCreate] = useState(false);
-  const [form, setForm] = useState({ email: '', full_name: '', password: '', role: 'OPERATOR' });
-  const [formError, setFormError] = useState('');
+  const [role, setRole] = useState('');
+  const [status, setStatus] = useState('');
+  const [enrolment, setEnrolment] = useState('');
+  const [sort, setSort] = useState('name');
+  const [page, setPage] = useState(1);
+  const [creating, setCreating] = useState(false);
+  const q = useApi<UserList>('/users', { search: useDebounced(search), role, status, enrolment, sort, page, page_size: 20 });
 
-  const { data, isLoading } = useUsers(search || undefined);
-  const createUser = useCreateUser();
-  const disableUser = useDisableUser();
+  const filter = (setter: (v: string) => void) => (v: string) => { setter(v); setPage(1); };
 
-  const handleCreate = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setFormError('');
-    try {
-      await createUser.mutateAsync(form);
-      setShowCreate(false);
-      setForm({ email: '', full_name: '', password: '', role: 'OPERATOR' });
-    } catch (err: any) {
-      setFormError(err.response?.data?.detail || 'Failed to create user');
-    }
+  return (
+    <>
+      <PageHeader title="Users" description="Accounts, roles and biometric enrolment status."
+        actions={can('users:manage') && <Button icon={<Plus className="h-4 w-4" />} onClick={() => setCreating(true)}>New user</Button>} />
+      <Card>
+        <div className="flex flex-wrap items-end gap-3 border-b border-line p-4">
+          <div className="relative min-w-[200px] flex-1">
+            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted" aria-hidden />
+            <Input aria-label="Search users" className="pl-9" placeholder="Search name or email" value={search}
+              onChange={(e) => { setSearch(e.target.value); setPage(1); }} />
+          </div>
+          <Select aria-label="Role" value={role} onChange={(e) => filter(setRole)(e.target.value)} className="w-36">
+            <option value="">All roles</option><option value="ADMIN">Admin</option><option value="OPERATOR">Operator</option><option value="VIEWER">Viewer</option>
+          </Select>
+          <Select aria-label="Status" value={status} onChange={(e) => filter(setStatus)(e.target.value)} className="w-36">
+            <option value="">Any status</option><option value="active">Active</option><option value="disabled">Disabled</option>
+          </Select>
+          <Select aria-label="Enrolment" value={enrolment} onChange={(e) => filter(setEnrolment)(e.target.value)} className="w-44">
+            <option value="">Any enrolment</option><option value="ACTIVE">Enrolled</option><option value="NOT_ENROLLED">Not enrolled</option>
+            <option value="REENROLMENT_REQUIRED">Re-enrolment required</option><option value="REVOKED">Revoked</option><option value="WITHDRAWN">Withdrawn</option>
+          </Select>
+          <Select aria-label="Sort" value={sort} onChange={(e) => setSort(e.target.value)} className="w-40">
+            <option value="name">Sort: name</option><option value="email">Sort: email</option><option value="created">Sort: newest</option><option value="last_login">Sort: last login</option>
+          </Select>
+        </div>
+        {q.isLoading ? <LoadingBlock rows={6} /> : q.isError ? <Callout tone="bad" className="m-4">{apiError(q.error).message}</Callout> :
+          !q.data?.users.length ? <EmptyState icon={<UsersIcon className="h-5 w-5" />} title="No users match these filters" /> : (
+            <>
+              <Table label="Users">
+                <THead><tr><Th>Name</Th><Th>Role</Th><Th>Status</Th><Th>Enrolment</Th><Th>Last sign-in</Th></tr></THead>
+                <tbody>
+                  {q.data.users.map((u) => (
+                    <Tr key={u.id} onClick={() => navigate(`/users/${u.id}`)}>
+                      <Td><p className="font-medium text-ink">{u.full_name}</p><p className="text-xs text-muted">{u.email}</p></Td>
+                      <Td><Badge tone={u.role === 'ADMIN' ? 'info' : 'neutral'} icon={false}>{u.role}</Badge></Td>
+                      <Td><Badge tone={u.is_active ? 'good' : 'bad'}>{u.is_active ? 'Active' : 'Disabled'}</Badge></Td>
+                      <Td><Badge tone={u.enrolment_usable ? 'good' : u.enrolment_status === 'NOT_ENROLLED' ? 'neutral' : 'warn'}>
+                        {u.enrolment_usable ? 'Enrolled' : humanize(u.enrolment_status)}</Badge></Td>
+                      <Td className="text-xs">{fmtRelative(u.last_login_at)}</Td>
+                    </Tr>
+                  ))}
+                </tbody>
+              </Table>
+              <Pagination page={page} pageSize={20} total={q.data.total} onPage={setPage} />
+            </>
+          )}
+      </Card>
+      <CreateUserModal open={creating} onClose={() => setCreating(false)} />
+    </>
+  );
+}
+
+function CreateUserModal({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const qc = useQueryClient();
+  const navigate = useNavigate();
+  const [form, setForm] = useState({ email: '', full_name: '', password: '', role: 'OPERATOR' as Role });
+  const [errors, setErrors] = useState<Record<string, string>>({});
+  const [busy, setBusy] = useState(false);
+  const set = (k: keyof typeof form) => (v: string) => setForm((f) => ({ ...f, [k]: v }));
+
+  const validate = () => {
+    const e: Record<string, string> = {};
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(form.email.trim())) e.email = 'Enter a valid email address';
+    if (!form.full_name.trim()) e.full_name = 'Name is required';
+    if (form.password.length < 10) e.password = 'At least 10 characters';
+    return e;
   };
 
-  const handleDisable = async (id: string) => {
-    if (confirm('Disable this user?')) {
-      await disableUser.mutateAsync(id);
+  const submit = async (ev: FormEvent) => {
+    ev.preventDefault();
+    const e = validate();
+    setErrors(e);
+    if (Object.keys(e).length) return;
+    setBusy(true);
+    try {
+      const r = await api.post<{ id: string }>('/users', { ...form, email: form.email.trim(), full_name: form.full_name.trim() });
+      toast.success('User created');
+      void qc.invalidateQueries({ queryKey: ['/users'] });
+      setForm({ email: '', full_name: '', password: '', role: 'OPERATOR' });
+      onClose();
+      navigate(`/users/${r.data.id}`);
+    } catch (err) {
+      const info = apiError(err);
+      setErrors({ ...info.fieldErrors, form: info.message });
+    } finally {
+      setBusy(false);
     }
   };
 
   return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <h2 className="text-lg font-semibold text-white">User Management</h2>
-        <button
-          onClick={() => setShowCreate(!showCreate)}
-          className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg px-4 py-2 text-sm"
-        >
-          <Plus size={16} />
-          New User
-        </button>
-      </div>
-
-      {showCreate && (
-        <div className="bg-slate-800 border border-slate-700 rounded-xl p-4">
-          <h3 className="font-medium text-white mb-4">Create User</h3>
-          <form onSubmit={handleCreate} className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="block text-xs text-slate-400 mb-1">Email</label>
-              <input type="email" required value={form.email}
-                onChange={e => setForm(f => ({ ...f, email: e.target.value }))}
-                className="w-full bg-slate-700 border border-slate-600 rounded px-3 py-2 text-white text-sm" />
-            </div>
-            <div>
-              <label className="block text-xs text-slate-400 mb-1">Full Name</label>
-              <input type="text" required value={form.full_name}
-                onChange={e => setForm(f => ({ ...f, full_name: e.target.value }))}
-                className="w-full bg-slate-700 border border-slate-600 rounded px-3 py-2 text-white text-sm" />
-            </div>
-            <div>
-              <label className="block text-xs text-slate-400 mb-1">Password</label>
-              <input type="password" required minLength={8} value={form.password}
-                onChange={e => setForm(f => ({ ...f, password: e.target.value }))}
-                className="w-full bg-slate-700 border border-slate-600 rounded px-3 py-2 text-white text-sm" />
-            </div>
-            <div>
-              <label className="block text-xs text-slate-400 mb-1">Role</label>
-              <select value={form.role} onChange={e => setForm(f => ({ ...f, role: e.target.value }))}
-                className="w-full bg-slate-700 border border-slate-600 rounded px-3 py-2 text-white text-sm">
-                <option value="OPERATOR">OPERATOR</option>
-                <option value="ADMIN">ADMIN</option>
-                <option value="VIEWER">VIEWER</option>
-              </select>
-            </div>
-            {formError && <div className="col-span-2 text-red-400 text-sm">{formError}</div>}
-            <div className="col-span-2 flex gap-2">
-              <button type="submit" disabled={createUser.isPending}
-                className="bg-blue-600 hover:bg-blue-700 text-white rounded px-4 py-2 text-sm disabled:opacity-50">
-                {createUser.isPending ? 'Creating...' : 'Create'}
-              </button>
-              <button type="button" onClick={() => setShowCreate(false)}
-                className="bg-slate-700 hover:bg-slate-600 text-white rounded px-4 py-2 text-sm">
-                Cancel
-              </button>
-            </div>
-          </form>
-        </div>
-      )}
-
-      <div className="relative">
-        <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-        <input
-          value={search}
-          onChange={e => setSearch(e.target.value)}
-          placeholder="Search users..."
-          className="w-full pl-9 bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-white text-sm"
-        />
-      </div>
-
-      <div className="bg-slate-800 border border-slate-700 rounded-xl overflow-hidden">
-        <table className="w-full text-sm">
-          <thead className="border-b border-slate-700">
-            <tr>
-              {['Name', 'Email', 'Role', 'Status', 'Enrolled', 'Actions'].map(h => (
-                <th key={h} className="text-left px-4 py-3 text-slate-400 font-medium text-xs">{h}</th>
-              ))}
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-slate-700">
-            {isLoading ? (
-              <tr><td colSpan={6} className="px-4 py-8 text-center text-slate-500">Loading...</td></tr>
-            ) : data?.users?.map((user: any) => (
-              <tr key={user.id} className="hover:bg-slate-750">
-                <td className="px-4 py-3 text-white">{user.full_name}</td>
-                <td className="px-4 py-3 text-slate-300">{user.email}</td>
-                <td className="px-4 py-3">
-                  <span className={`px-2 py-0.5 rounded text-xs ${
-                    user.role === 'ADMIN' ? 'bg-purple-900 text-purple-300' : 'bg-blue-900 text-blue-300'
-                  }`}>{user.role}</span>
-                </td>
-                <td className="px-4 py-3">
-                  <span className={`px-2 py-0.5 rounded text-xs ${
-                    user.is_active ? 'bg-green-900 text-green-300' : 'bg-red-900 text-red-300'
-                  }`}>{user.is_active ? 'Active' : 'Disabled'}</span>
-                </td>
-                <td className="px-4 py-3">
-                  <span className={`px-2 py-0.5 rounded text-xs ${
-                    user.has_enrolment ? 'bg-green-900 text-green-300' : 'bg-slate-700 text-slate-400'
-                  }`}>{user.has_enrolment ? 'Yes' : 'No'}</span>
-                </td>
-                <td className="px-4 py-3">
-                  <button onClick={() => handleDisable(user.id)} className="text-slate-400 hover:text-red-400 transition-colors" title="Disable">
-                    <UserX size={16} />
-                  </button>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-        {data && <div className="px-4 py-2 text-slate-500 text-xs border-t border-slate-700">{data.total} users total</div>}
-      </div>
-    </div>
+    <Modal open={open} onClose={onClose} title="New user" description="Passwords need 10+ characters from at least three character classes."
+      footer={<><Button variant="outline" onClick={onClose}>Cancel</Button><Button type="submit" form="create-user" loading={busy}>Create user</Button></>}>
+      <form id="create-user" onSubmit={submit} className="space-y-4" noValidate>
+        {errors.form && <Callout tone="bad">{errors.form}</Callout>}
+        <Field label="Full name" htmlFor="nu-name" error={errors.full_name}>
+          <Input id="nu-name" value={form.full_name} onChange={(e) => set('full_name')(e.target.value)} invalid={!!errors.full_name} />
+        </Field>
+        <Field label="Email" htmlFor="nu-email" error={errors.email}>
+          <Input id="nu-email" type="email" value={form.email} onChange={(e) => set('email')(e.target.value)} invalid={!!errors.email} />
+        </Field>
+        <Field label="Initial password" htmlFor="nu-pw" error={errors.password} hint="Share it securely; the user should change it after first sign-in.">
+          <Input id="nu-pw" type="password" autoComplete="new-password" value={form.password} onChange={(e) => set('password')(e.target.value)} invalid={!!errors.password} />
+        </Field>
+        <Field label="Role" htmlFor="nu-role">
+          <Select id="nu-role" value={form.role} onChange={(e) => set('role')(e.target.value)}>
+            <option value="OPERATOR">Operator — enrol and verify people</option>
+            <option value="VIEWER">Viewer — read-only dashboards and history</option>
+            <option value="ADMIN">Administrator — full control</option>
+          </Select>
+        </Field>
+      </form>
+    </Modal>
   );
-};
-
-export default Users;
+}

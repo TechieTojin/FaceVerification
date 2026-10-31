@@ -1,15 +1,41 @@
-fastapi>=0.104.0
-uvicorn[standard]>=0.24.0
-sqlalchemy>=2.0.0
-pydantic-settings>=2.0.0
-python-jose[cryptography]>=3.3.0
-passlib[bcrypt]>=1.7.4
-python-multipart>=0.0.6
-pillow>=10.0.0
-cryptography>=41.0.0
-alembic>=1.12.0
-numpy>=1.24.0
-pytest>=7.4.0
-pytest-asyncio>=0.21.0
-httpx>=0.25.0
-starlette>=0.27.0
+# FaceVerification 4.0 backend — versions verified on Python 3.10 (Windows 11) on 2026-10-31.
+#
+#   python -m venv .venv
+#   .venv\Scripts\pip install -r backend/requirements_backend.txt          (Windows)
+#   .venv\Scripts\pip install --no-deps -r backend/requirements_mediapipe.txt
+#
+# MediaPipe is installed separately with --no-deps: its wheel depends on
+# opencv-contrib-python, which would replace the pinned opencv-python below.
+
+fastapi==0.143.0
+uvicorn[standard]==0.54.0
+starlette==1.7.0
+sqlalchemy==2.0.54
+alembic==1.20.0
+pydantic==2.14.1
+pydantic-settings==2.15.0
+python-jose[cryptography]==3.5.0
+passlib[bcrypt]==1.7.4
+bcrypt==4.0.1
+python-multipart==0.0.32
+cryptography==50.0.2
+pillow==10.4.0
+numpy==2.2.6
+python-dotenv==1.2.4
+
+# Passkeys (WebAuthn) and authenticator-app codes (TOTP)
+webauthn==2.7.0
+pyotp==2.9.0
+
+# AI runtime (CPU)
+opencv-python==4.10.0.84
+deepface==0.0.102
+onnxruntime==1.23.2
+
+# PostgreSQL driver (optional; SQLite needs nothing extra)
+psycopg[binary]==3.2.12
+
+# Tests
+pytest==9.1.1
+httpx2==2.13.1
+aiosmtpd==1.4.6        # local SMTP server for email-delivery tests

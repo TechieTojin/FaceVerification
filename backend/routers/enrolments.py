@@ -1,145 +1,178 @@
-"""Biometric enrolment router."""
+"""Biometric enrolment, consent and approval endpoints."""
 from __future__ import annotations
-import logging
-from datetime import datetime
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
+
+import json
+from typing import Literal, Optional
+
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
+from backend.core.deps import Actor, client_ip, get_actor, membership_role, require
+from backend.core.permissions import Permission
 from backend.database import get_db
+from backend.models.biometric import ConsentRecord, EnrolmentRequest
+from backend.models.organization import Membership
 from backend.models.user import User
-from backend.models.biometric import BiometricEnrolment, ConsentRecord
-from backend.schemas.enrolment import ConsentRequest, EnrolmentResponse, EnrolmentStatus
-from backend.services.biometric_service import detect_face, assess_quality, generate_embedding, encrypt_embedding
-from backend.services.audit_service import log_security_event
-from backend.routers.auth import get_current_user, require_admin
+from backend.models.verification import SessionPurpose
+from backend.services import capture_service, enrolment_service
+from backend.services.policy_service import get_active_policy
 
-log = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1/enrolments", tags=["enrolments"])
 
 
-@router.post("/{user_id}/consent")
-def record_consent(
-    user_id: str,
-    data: ConsentRequest,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-):
-    user = db.query(User).filter(User.id == user_id).first()
-    if not user:
+class ConsentBody(BaseModel):
+    subject_password: str = Field(..., min_length=1, max_length=256)
+    accept: bool
+
+
+class ReasonBody(BaseModel):
+    reason: str = Field("", max_length=500)
+
+
+class ReviewBody(BaseModel):
+    note: str = Field("", max_length=1000)
+
+
+def _target(db: Session, actor: Actor, user_id: str) -> User:
+    """A member (any membership status) of the actor's organisation, else 404."""
+    u = (db.query(User).join(Membership, Membership.user_id == User.id)
+         .filter(User.id == user_id, Membership.organization_id == actor.org_id).first())
+    if not u:
         raise HTTPException(status_code=404, detail="User not found")
-
-    consent = ConsentRecord(
-        user_id=user_id,
-        consent_given=data.consent_given,
-        consent_text=data.consent_text,
-        recorded_at=datetime.utcnow(),
-    )
-    db.add(consent)
-
-    enrolment = db.query(BiometricEnrolment).filter(BiometricEnrolment.user_id == user_id).first()
-    if not enrolment:
-        enrolment = BiometricEnrolment(user_id=user_id)
-        db.add(enrolment)
-
-    enrolment.consent_given = data.consent_given
-    enrolment.consent_timestamp = datetime.utcnow() if data.consent_given else None
-    db.commit()
-
-    log_security_event(db, "CONSENT_RECORDED", f"Consent {data.consent_given} for user {user_id}", "INFO", user_id=current_user.id)
-    return {"message": "Consent recorded", "consent_given": data.consent_given}
+    return u
 
 
-@router.post("/{user_id}/enrol")
-async def enrol_user(
-    user_id: str,
-    file: UploadFile = File(...),
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-):
-    user = db.query(User).filter(User.id == user_id).first()
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
+def _raise(exc: enrolment_service.EnrolmentDenied):
+    raise exc  # rendered as {"detail", "code"} by the handler in main.py
 
-    enrolment = db.query(BiometricEnrolment).filter(BiometricEnrolment.user_id == user_id).first()
-    if not enrolment or not enrolment.consent_given:
-        raise HTTPException(status_code=400, detail="Consent not given")
 
-    image_bytes = await file.read()
-    if len(image_bytes) > 10 * 1024 * 1024:
-        raise HTTPException(status_code=400, detail="Image too large (max 10MB)")
+def request_view(db: Session, r: EnrolmentRequest, actor: Actor) -> dict:
+    names = {u.id: u for u in db.query(User).filter(User.id.in_(
+        [x for x in (r.user_id, r.requested_by_user_id, r.reviewed_by_user_id) if x])).all()}
+    v = {"id": r.id, "user_id": r.user_id, "user_name": getattr(names.get(r.user_id), "full_name", None),
+         "user_email": getattr(names.get(r.user_id), "email", None), "kind": r.kind, "status": r.status,
+         "approval_reasons": json.loads(r.approval_reasons or "[]"), "sample_count": r.sample_count,
+         "quality_score": r.quality_score, "consistency_score": r.consistency_score, "model_name": r.model_name,
+         "requested_by": getattr(names.get(r.requested_by_user_id), "email", None),
+         "requested_by_user_id": r.requested_by_user_id, "created_at": r.created_at,
+         "reviewed_by": getattr(names.get(r.reviewed_by_user_id), "email", None), "reviewed_at": r.reviewed_at,
+         "review_note": r.review_note, "session_id": r.session_id}
+    if actor.can(Permission.ENROL_APPROVE):
+        v["duplicate_user_ids"] = json.loads(r.duplicate_user_ids) if r.duplicate_user_ids else []
+    return v
 
-    # Detect face
-    detection = detect_face(image_bytes)
-    if not detection.face_detected:
-        raise HTTPException(status_code=400, detail="No face detected in image")
-    if detection.face_count > 1:
-        raise HTTPException(status_code=400, detail="Multiple faces detected")
 
-    # Assess quality
-    quality = assess_quality(image_bytes)
-    if not quality.is_acceptable:
-        raise HTTPException(status_code=400, detail=f"Image quality too low: {quality.message}")
+@router.get("/consent-text")
+def consent_text(_: Actor = Depends(get_actor)):
+    return {"version": enrolment_service.CONSENT_VERSION, "text": enrolment_service.CONSENT_TEXT}
 
-    # Generate embedding
+
+@router.get("/requests")
+def list_requests(status: Optional[Literal["PENDING", "APPROVED", "REJECTED", "AUTO_APPROVED", "CANCELLED"]] = None,
+                  user_id: Optional[str] = None, page: int = Query(1, ge=1), page_size: int = Query(20, ge=1, le=100),
+                  db: Session = Depends(get_db), actor: Actor = Depends(require(Permission.ENROL_READ))):
+    q = db.query(EnrolmentRequest).filter(EnrolmentRequest.organization_id == actor.org_id)
+    if not actor.can(Permission.ENROL_APPROVE):
+        q = q.filter(EnrolmentRequest.requested_by_user_id == actor.id)
+    if status:
+        q = q.filter(EnrolmentRequest.status == status)
+    if user_id:
+        q = q.filter(EnrolmentRequest.user_id == user_id)
+    total = q.count()
+    rows = q.order_by(EnrolmentRequest.created_at.desc()).offset((page - 1) * page_size).limit(page_size).all()
+    return {"total": total, "page": page, "page_size": page_size, "requests": [request_view(db, r, actor) for r in rows]}
+
+
+@router.post("/requests/{request_id}/approve")
+def approve(request_id: str, body: ReviewBody, request: Request, db: Session = Depends(get_db),
+            actor: Actor = Depends(get_actor)):
     try:
-        embedding = generate_embedding(image_bytes)
-    except Exception as e:
-        log.warning("Embedding generation failed: %s", e)
-        raise HTTPException(status_code=400, detail=f"Could not generate face embedding: {str(e)}")
+        r = enrolment_service.review_request(db, actor, request_id, True, body.note, get_active_policy(db, actor.org_id), client_ip(request))
+    except enrolment_service.EnrolmentDenied as exc:
+        _raise(exc)
+    return request_view(db, r, actor)
 
-    # Encrypt and store
-    encrypted = encrypt_embedding(embedding)
-    enrolment.embedding_encrypted = encrypted
-    enrolment.quality_score = quality.quality_score
-    enrolment.enrolled_at = datetime.utcnow()
-    enrolment.is_active = True
-    enrolment.model_name = "ArcFace"
-    db.commit()
 
-    log_security_event(db, "ENROLMENT_COMPLETE", f"User {user_id} enrolled", "INFO", user_id=current_user.id)
+@router.post("/requests/{request_id}/reject")
+def reject(request_id: str, body: ReviewBody, request: Request, db: Session = Depends(get_db),
+           actor: Actor = Depends(get_actor)):
+    try:
+        r = enrolment_service.review_request(db, actor, request_id, False, body.note, get_active_policy(db, actor.org_id), client_ip(request))
+    except enrolment_service.EnrolmentDenied as exc:
+        _raise(exc)
+    return request_view(db, r, actor)
 
+
+@router.get("/{user_id}")
+def status(user_id: str, db: Session = Depends(get_db), actor: Actor = Depends(get_actor)):
+    if actor.id != user_id and not actor.can(Permission.ENROL_READ):
+        raise HTTPException(status_code=403, detail="You do not have permission to view this enrolment")
+    target = _target(db, actor, user_id)
+    enr = enrolment_service.get_enrolment(db, actor.org_id, user_id)
+    consents = (db.query(ConsentRecord)
+                .filter(ConsentRecord.organization_id == actor.org_id, ConsentRecord.user_id == user_id)
+                .order_by(ConsentRecord.recorded_at.desc()).limit(20).all())
     return {
-        "message": "Enrolment successful",
-        "quality_score": quality.quality_score,
-        "enrolled_at": enrolment.enrolled_at.isoformat(),
+        "user_id": user_id, "user_name": target.full_name, "user_email": target.email, "user_role": getattr(membership_role(db, actor.org_id, user_id), "value", None),
+        **enrolment_service.enrolment_status_view(enr),
+        "consent_history": [{"granted": c.consent_given, "recorded_at": c.recorded_at, "version": c.consent_version,
+                             "purpose": c.purpose, "method": c.method} for c in consents],
     }
 
 
-@router.get("/{user_id}", response_model=EnrolmentStatus)
-def get_enrolment_status(
-    user_id: str,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-):
-    enrolment = db.query(BiometricEnrolment).filter(BiometricEnrolment.user_id == user_id).first()
-    if not enrolment:
-        return EnrolmentStatus(
-            user_id=user_id,
-            is_enrolled=False,
-            consent_given=False,
-            quality_score=0.0,
-        )
-    return EnrolmentStatus(
-        user_id=user_id,
-        is_enrolled=enrolment.enrolled_at is not None and enrolment.is_active,
-        consent_given=enrolment.consent_given,
-        quality_score=enrolment.quality_score,
-        enrolled_at=enrolment.enrolled_at,
-        model_name=enrolment.model_name if enrolment.enrolled_at else None,
-    )
+@router.post("/{user_id}/consent")
+def grant_consent(user_id: str, body: ConsentBody, request: Request, db: Session = Depends(get_db),
+                  actor: Actor = Depends(get_actor)):
+    if not body.accept:
+        raise HTTPException(status_code=422, detail="Consent must be explicitly accepted")
+    target = _target(db, actor, user_id)
+    try:
+        enr = enrolment_service.record_consent(db, actor, target, body.subject_password, client_ip(request))
+    except enrolment_service.EnrolmentDenied as exc:
+        _raise(exc)
+    return enrolment_service.enrolment_status_view(enr)
 
 
-@router.delete("/{user_id}", status_code=204)
-def revoke_enrolment(
-    user_id: str,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(require_admin),
-):
-    enrolment = db.query(BiometricEnrolment).filter(BiometricEnrolment.user_id == user_id).first()
-    if not enrolment:
-        raise HTTPException(status_code=404, detail="No enrolment found")
-    enrolment.embedding_encrypted = None
-    enrolment.is_active = False
-    enrolment.enrolled_at = None
-    db.commit()
-    log_security_event(db, "ENROLMENT_REVOKED", f"Enrolment revoked for user {user_id}", "WARNING", user_id=current_user.id)
+@router.post("/{user_id}/consent/withdraw")
+def withdraw_consent(user_id: str, body: ReasonBody, request: Request, db: Session = Depends(get_db),
+                     actor: Actor = Depends(get_actor)):
+    target = _target(db, actor, user_id)
+    try:
+        enr = enrolment_service.withdraw_consent(db, actor, target, client_ip(request), body.reason)
+    except enrolment_service.EnrolmentDenied as exc:
+        _raise(exc)
+    return enrolment_service.enrolment_status_view(enr)
+
+
+@router.post("/{user_id}/sessions", status_code=201)
+def start_capture(user_id: str, request: Request, db: Session = Depends(get_db),
+                  actor: Actor = Depends(get_actor)):
+    """Start an enrolment capture session (liveness challenge + multi-sample capture)."""
+    target = _target(db, actor, user_id)
+    created = capture_service.create_session(db, actor, SessionPurpose.ENROL, target, client_ip(request))
+    view = capture_service.session_view(db, created.session, actor, state=created.state)
+    view["frame_token"] = created.frame_token
+    return view
+
+
+@router.delete("/{user_id}")
+def revoke(user_id: str, body: ReasonBody, request: Request, db: Session = Depends(get_db),
+           actor: Actor = Depends(get_actor)):
+    target = _target(db, actor, user_id)
+    try:
+        enr = enrolment_service.revoke(db, actor, target, body.reason, client_ip(request))
+    except enrolment_service.EnrolmentDenied as exc:
+        _raise(exc)
+    return enrolment_service.enrolment_status_view(enr)
+
+
+@router.post("/{user_id}/request-reenrolment")
+def request_reenrolment(user_id: str, body: ReasonBody, request: Request, db: Session = Depends(get_db),
+                        actor: Actor = Depends(get_actor)):
+    target = _target(db, actor, user_id)
+    try:
+        enr = enrolment_service.request_reenrolment(db, actor, target, body.reason, client_ip(request))
+    except enrolment_service.EnrolmentDenied as exc:
+        _raise(exc)
+    return enrolment_service.enrolment_status_view(enr)

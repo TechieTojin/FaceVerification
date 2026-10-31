@@ -1,0 +1,15 @@
+# Install with:  pip install --no-deps -r backend/requirements_mediapipe.txt
+# (--no-deps keeps the pinned opencv-python; MediaPipe's other runtime deps are listed here.)
+mediapipe==1.2.0
+absl-py==2.5.1
+flatbuffers==25.12.19
+certifi
+matplotlib==3.10.9
+contourpy
+cycler
+fonttools
+kiwisolver
+pyparsing
+python-dateutil
+packaging
+six

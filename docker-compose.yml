@@ -1,0 +1,40 @@
+# FaceVerification 3.0 — reference deployment (PostgreSQL + API + web).
+#   python scripts/fetch_models.py     # once, before building the web image
+#   cp .env.example .env               # then fill SECRET_KEY, EMBEDDING_ENCRYPTION_KEY, POSTGRES_PASSWORD, admin seed
+#   docker compose up --build
+# Not exercised on the development machine (Docker unavailable there) — validate in your environment.
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: faceverification
+      POSTGRES_USER: faceverification
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+    volumes: [pgdata:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U faceverification"]
+      interval: 10s
+      retries: 10
+
+  api:
+    build: { context: ., dockerfile: Dockerfile }
+    env_file: .env
+    environment:
+      APP_ENV: production
+      DATABASE_URL: postgresql+psycopg://faceverification:${POSTGRES_PASSWORD}@db:5432/faceverification
+      COOKIE_SECURE: "true"
+      FORWARDED_ALLOW_IPS: "*"        # only the web container can reach the API on this private network
+      LOG_FORMAT: json
+    volumes: [deepface:/data, backups:/app/backups]
+    depends_on: { db: { condition: service_healthy } }
+    expose: ["8000"]
+
+  web:
+    build: { context: ., dockerfile: frontend/Dockerfile }
+    ports: ["8080:8080"]
+    depends_on: [api]
+
+volumes:
+  pgdata:
+  deepface:
+  backups:

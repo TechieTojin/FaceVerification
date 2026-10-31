@@ -1,0 +1,53 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [master, "feature/**"]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.10" }
+      - name: Install backend dependencies
+        run: |
+          sudo apt-get update && sudo apt-get install -y libgl1 libglib2.0-0
+          python -m venv .venv
+          .venv/bin/pip install -r backend/requirements_backend.txt
+          .venv/bin/pip install --no-deps -r backend/requirements_mediapipe.txt
+      - name: Backend + CLI tests (fake provider, isolated DB)
+        run: .venv/bin/python -m pytest backend/tests tests -q
+
+      - uses: actions/setup-node@v4
+        with: { node-version: "24", cache: npm, cache-dependency-path: frontend/package-lock.json }
+      - name: Frontend install
+        working-directory: frontend
+        run: npm ci
+      - name: Type-check, lint, unit tests, production build
+        working-directory: frontend
+        run: |
+          npm run typecheck
+          npx oxlint src
+          npm test
+          npm run build
+      - name: TypeScript SDK (type-check + tests; Node 24 runs the TypeScript sources directly)
+        working-directory: sdk/typescript
+        run: |
+          ../../frontend/node_modules/.bin/tsc -p tsconfig.json --noEmit
+          node --test test/sdk.test.ts
+      - name: Playwright end-to-end (deterministic suite)
+        working-directory: frontend
+        run: |
+          npx playwright install --with-deps chromium
+          npx playwright test
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: playwright-report
+          path: frontend/playwright-report
+          retention-days: 7

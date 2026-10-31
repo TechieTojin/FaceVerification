@@ -1,0 +1,21 @@
+{
+  "name": "@faceverification/sdk",
+  "version": "4.0.0",
+  "description": "Server-side TypeScript SDK for the FaceVerification integration API",
+  "type": "module",
+  "license": "UNLICENSED",
+  "private": true,
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": { ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js" } },
+  "files": ["dist", "README.md"],
+  "engines": { "node": ">=20" },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "node --test test/sdk.test.ts"
+  },
+  "devDependencies": {
+    "typescript": "~6.0.0"
+  }
+}

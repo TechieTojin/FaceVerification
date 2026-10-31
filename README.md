@@ -1,561 +1,199 @@
-# FaceVerification AI
+# FaceVerification 4.0
 
-**Adaptive Biometric Trust Platform**
+Supervised biometric **1:1 face verification** and identity management: an operator verifies that the person in front of a camera is the enrolled user they selected. The server issues a randomised liveness challenge, validates the evidence itself, compares an ArcFace embedding with an encrypted reference template and records an auditable decision.
 
-![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&logoColor=white)
-![FastAPI](https://img.shields.io/badge/FastAPI-0.100%2B-009688?logo=fastapi&logoColor=white)
-![React](https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=black)
-![TypeScript](https://img.shields.io/badge/TypeScript-5-3178C6?logo=typescript&logoColor=white)
-![Tests](https://img.shields.io/badge/tests-102%20passing-brightgreen)
-![License](https://img.shields.io/badge/license-MIT-blue)
+> **Read [Security model & limitations](#security-model--limitations) before deploying.** A browser cannot prove that video comes from a physical camera, and no accuracy or anti-spoofing figures are claimed for this system beyond what is measured with your own labelled data.
 
-A full-stack biometric identity verification platform built on ArcFace face recognition and passive liveness detection. Includes a React web dashboard, FastAPI backend, encrypted biometric storage, and a standalone Python CLI.
+Version 4.0 adds multi-organisation tenancy, passkeys and multi-factor sign-in, QR / phone verification, camera
+and device management, a manual review queue, a notification centre, an integration API with signed results and
+a TypeScript SDK, and an offline kiosk agent — see [docs/V4_FEATURES.md](docs/V4_FEATURES.md).
 
-> **Important:** This is a research and development platform. Read the [Security Model](#security-architecture) and [Known Limitations](#known-limitations) sections before any deployment.
+The repository also contains the original prototype (`face-recognition.py`, kept for history) and the v1.3 desktop CLI ([CLI section](#desktop-cli-v13)), both unchanged.
 
 ---
 
-## Table of Contents
-
-- [Overview](#overview)
-- [Features](#features)
+## Contents
+- [What it does](#what-it-does)
 - [Architecture](#architecture)
-- [Technology Stack](#technology-stack)
-- [Project Structure](#project-structure)
-- [How It Works](#how-it-works)
-- [Getting Started](#getting-started)
+- [How a verification decision is made](#how-a-verification-decision-is-made)
+- [Getting started](#getting-started)
+- [Running tests](#running-tests)
 - [Configuration](#configuration)
-- [Running the Application](#running-the-application)
-- [Running Tests](#running-tests)
-- [API Reference](#api-reference)
-- [Security Architecture](#security-architecture)
-- [Privacy and Biometric Data](#privacy-and-biometric-data)
-- [Known Limitations](#known-limitations)
-- [Roadmap](#roadmap)
-- [Contributing](#contributing)
-- [License](#license)
+- [Security model & limitations](#security-model--limitations)
+- [Desktop CLI (v1.3)](#desktop-cli-v13)
+- [Further documentation](#further-documentation)
 
----
+## What it does
 
-## Overview
-
-FaceVerification AI provides a complete biometric verification workflow:
-
-1. An administrator registers users and records explicit biometric consent.
-2. A user enrolls their face — the system detects the face, assesses quality, runs passive liveness detection, and generates an ArcFace embedding encrypted at rest.
-3. During a verification session, live webcam frames are analyzed server-side: face detection → liveness check → ArcFace comparison → verification decision.
-4. All decisions are logged. The dashboard shows real-time statistics, verification history, and security events.
-
-The web platform wraps a standalone Python v1.3 CLI that operates independently of the web stack.
-
-**Real-world use cases (research/prototype contexts):**
-- Access control prototyping
-- Identity verification research
-- Biometric pipeline evaluation
-- Liveness and anti-spoofing research
-
----
-
-## Features
-
-### Web Platform (v2.0)
-
-| Feature | Status |
+| Area | Capability |
 |---|---|
-| Admin authentication (JWT, bcrypt) | Complete |
-| Role-based access control (Admin / Operator / Viewer) | Complete |
-| Multi-user registration and management | Complete |
-| Consent-based facial enrolment | Complete |
-| ArcFace embedding generation (ONNX) | Complete |
-| Fernet encryption of stored embeddings | Complete |
-| Live browser webcam verification | Complete |
-| Passive liveness detection (MiniFASNet) | Complete |
-| Adaptive verification policy engine | Complete |
-| Explainable verification results | Complete |
-| Verification history (paginated) | Complete |
-| Dashboard with real DB statistics | Complete |
-| Analytics charts (Recharts) | Complete |
-| Security event feed | Complete |
-| Admin settings API | Complete |
-| 102 automated tests | Complete |
-
-### Standalone CLI (v1.3)
-
-| Feature | Status |
-|---|---|
-| Webcam face verification | Complete |
-| ArcFace recognition | Complete |
-| Passive anti-spoofing | Complete |
-| 10-state verification state machine | Complete |
-| Background inference thread | Complete |
-| FPS / latency HUD overlay | Complete |
-
----
+| Live verification | Camera device selection, in-browser MediaPipe face tracking with real bounding boxes and landmarks, live guidance (closer / back / lighting / pose / one person), server-generated randomised challenge (look straight → blink / turn left / turn right → look straight), passive MiniFASNet anti-spoofing, ArcFace matching at start **and** end of the challenge. |
+| Enrolment | Wizard: subject → authorisation preview → consent attested by the **subject's own password** → liveness challenge + multi-sample capture → consistency check → duplicate check → active template or **pending admin approval** (replacement, suspected duplicate, operator self-enrolment). |
+| Identity management | Users CRUD, roles, disable/enable, password reset, search/filter/pagination, enrolment record, consent history, revoke, re-enrolment request, approvals queue, four-eyes option, per-user audit trail. |
+| RBAC | `ADMIN`, `OPERATOR`, `VIEWER` with a single server-side permission map (`backend/core/permissions.py`); the UI only reflects the permissions `/auth/me` returns. |
+| Sessions | Ownership, expiry, inactivity timeout, cancellation, one in-flight frame per session (atomic claim), one-time frame tokens + sequence numbers, exact-replay rejection, frozen-feed termination, network-recovery resync, maintenance job that closes abandoned sessions. |
+| Policy | Versioned, validated, audited admin settings that **actually drive** the pipeline (thresholds, liveness, attempts, timeouts, quality, capture, alerts, retention). Running sessions keep the policy snapshot they started with; weakening changes require confirmation and a reason. |
+| Monitoring | Live dashboard (SSE with heartbeat, reconnect and stale indicator), real DB/model/migration health, suspicious-activity alerts with acknowledge/resolve, security event log, admin audit log. |
+| History | Session history with filters, sorting, detail view (challenge steps, per-frame events, policy snapshot) and CSV export (formula-injection safe). Scores are visible only to roles with `history:scores`. |
+| Documents | Live face ↔ document portrait match. Document **authenticity** is a separate field that is `NOT_PERFORMED` unless a provider is configured; the overall decision is "identity verified" only when both pass. Document images are never stored; the portrait template is purged after use. |
+| Analytics | Latency p50/p95/p99, completion/verified/liveness-rejection/quality-failure/error rates, throughput, trends. An evaluation module computes **FAR / FRR / EER** only from labelled datasets you upload. |
+| Organisations (v4) | Tenants with per-organisation roles, policies and data; organisation switcher; invitations; platform administrators create/suspend organisations. Every query is scoped to the active organisation, re-validated on each request. |
+| Sign-in (v4) | Passkeys (WebAuthn, usernameless), optional live face check *after* a passkey, authenticator apps (TOTP), email codes (when SMTP is configured), recovery codes, policy-required MFA for administrators, step-up for sensitive actions (face + factor for high-risk ones when enabled). |
+| Cross-device (v4) | QR pairing with an operator-confirmed code; the person verifies on their own phone while the desktop follows live; hosted links for the integration API. |
+| Operations (v4) | Registered cameras with heartbeats; devices with key-based provisioning, signed requests and revocation; review queue for borderline/low-confidence/spoof cases; notification centre with optional email. |
+| Integrations (v4) | Scoped API credentials, hosted verification sessions, ES256-signed assertions + JWKS, signed webhooks with retries, idempotency; server-side TypeScript SDK in `sdk/typescript`. |
+| Offline kiosk (v4) | `python -m kiosk`: local inference with the same models, encrypted provisioned templates for explicitly authorised people, bounded validity, hash-chained audit queue with idempotent sync. |
 
 ## Architecture
 
 ```mermaid
-graph TD
-    Browser["Browser\n(React + Vite)"]
-    API["FastAPI Backend\n:8000"]
-    Bio["Biometric Service\n(DeepFace / ArcFace)"]
-    DB["SQLite / PostgreSQL\n(SQLAlchemy)"]
-    Models["ArcFace ONNX\nMiniFASNet ONNX"]
-    CLI["Python CLI\nface_verification.py"]
-    Cam["Webcam"]
-
-    Browser -->|"REST + JWT"| API
-    API --> Bio
-    API --> DB
-    Bio --> Models
-    CLI --> Models
-    CLI --> Cam
-    Browser -->|"getUserMedia"| Cam
-
-    subgraph "Verification Pipeline"
-        V1["Face Detection\n(OpenCV / RetinaFace)"]
-        V2["Quality Check"]
-        V3["Liveness\n(MiniFASNet)"]
-        V4["ArcFace Embedding\n+ Cosine Distance"]
-        V5["Policy Decision\nVERIFIED / REJECTED"]
-        V1 --> V2 --> V3 --> V4 --> V5
-    end
+flowchart LR
+  subgraph Browser["Browser (React + TypeScript)"]
+    CAM[getUserMedia] --> TRK[MediaPipe FaceLandmarker<br/>local tracking + guidance]
+    TRK --> GATE{frame worth<br/>sending?}
+    GATE -->|JPEG, one in flight| API
+    UI[Pages: verify · enrol · documents · history · admin] --- SSE[EventSource]
+  end
+  subgraph Server["FastAPI"]
+    API[Session API<br/>atomic claim · token · seq · replay check] --> POOL[Bounded inference pool]
+    POOL --> MP[MediaPipe landmarks<br/>pose · blink · count]
+    POOL --> FAS[MiniFASNet passive anti-spoof]
+    POOL --> ARC[ArcFace embedding]
+    API --> ENG[Challenge / decision engine<br/>policy snapshot]
+    ENG --> DB[(SQLite / PostgreSQL<br/>Alembic)]
+    ENG --> BUS[Event bus] --> SSE
+    REF[Fernet-encrypted templates] --> ENG
+  end
 ```
 
-### Threading model (CLI)
+* **Transport:** HTTP multipart frames with server-enforced backpressure (exactly one frame in flight per session). Chosen over WebSockets because it reuses cookie + CSRF authentication, gives atomic per-frame state transitions in the database and is easy to test. Live dashboards use Server-Sent Events.
+* **Inference never runs on the event loop:** a fixed worker pool with non-blocking admission returns `503 Retry-After` when saturated.
+* **All decisions are server-side.** The browser's tracker only provides guidance and avoids uploading obviously unusable frames.
 
-The standalone CLI keeps the display loop independent of inference:
+Key code: `backend/services/biometric/engine.py` (state machine), `backend/services/capture_service.py` (session protocol), `backend/services/biometric/providers.py` (models), `backend/services/policy_service.py`, `frontend/src/features/camera/` (camera, tracker, guidance, capture loop).
 
-```
-Main thread (display)          InferenceWorker thread
-──────────────────────         ──────────────────────
-cap.read() → frame     ──────▶ wait(frame_event)
-push_frame()                   _process():
-result_queue.get_nowait() ◀─── extract_faces (liveness)
-state_mgr.tick()               DeepFace.verify()
-draw_overlay()          ◀───── result_queue.put()
-cv2.imshow()
-```
+## How a verification decision is made
 
----
+1. The operator picks an enrolled user. The server checks consent and template usability, rate-limits the operator, snapshots the active policy and returns a random challenge plus a one-time frame token.
+2. Each frame is claimed atomically (`active`, matching token, expected sequence, nothing in flight, frame budget left), decoded safely, checked against recent frame digests, then analysed on the inference pool.
+3. **Look straight** (2 consecutive frontal frames passing the quality gate) → passive anti-spoof → embedding.
+4. **Random actions**: turns must move ≥ 75 % of the policy angle from the step's starting yaw in the requested direction (turning the wrong way fails the round); a blink needs an open-eyes frame followed by both eyes closing. Each step has a timeout; abrupt face jumps or a second face restart the round.
+5. **Look straight** again → passive anti-spoof → embedding. Only now is identity decided: the maximum cosine distance of the opening and closing embeddings must be ≤ the policy threshold (default 0.68, DeepFace's published ArcFace value — not calibrated for your population).
+6. Failed rounds consume attempts and issue a *new* random challenge. Terminal outcomes: `VERIFIED`, `NOT_MATCHED`, `LIVENESS_FAILED`, `SESSION_EXPIRED`, `SESSION_CANCELLED`, `ATTEMPTS_EXHAUSTED`, `ERROR` (`ENROLMENT_CAPTURED` for enrolment). Per-frame: `IN_PROGRESS`, `RETRY_REQUIRED`, `NO_FACE`, `MULTIPLE_FACES`, `QUALITY_FAILED`.
 
-## Technology Stack
+Cosine distance is a dissimilarity score, **not** a probability that two faces belong to the same person.
 
-**Backend**
+## Getting started
 
-| Component | Technology |
-|---|---|
-| API framework | FastAPI |
-| ORM | SQLAlchemy |
-| Database | SQLite (dev) / PostgreSQL (prod) |
-| Authentication | JWT (python-jose) + bcrypt (passlib) |
-| AI / CV | DeepFace 0.0.102 (ONNX) |
-| Recognition model | ArcFace |
-| Liveness model | MiniFASNetV2 + MiniFASNetV1SE |
-| Face detection | OpenCV Haar cascade (default) |
-| Embedding encryption | Fernet (cryptography) |
-
-**Frontend**
-
-| Component | Technology |
-|---|---|
-| Framework | React 19 |
-| Language | TypeScript |
-| Build | Vite |
-| Styling | Tailwind CSS |
-| HTTP client | Axios + TanStack Query |
-| Charts | Recharts |
-| Auth state | Zustand |
-
-**Development**
-
-| Component | Technology |
-|---|---|
-| Python tests | pytest |
-| Test DB | SQLite in-memory (StaticPool) |
-| Python version | 3.10+ |
-| Node version | 18+ |
-
----
-
-## Project Structure
-
-```
-FaceVerification/
-├── face_verification.py      # v1.3 standalone CLI entry point
-├── face-recognition.py       # Original 44-line prototype (preserved)
-├── app/                      # v1.3 Python package
-│   ├── config.py             # AppConfig dataclass
-│   ├── state_manager.py      # 10-state verification state machine
-│   ├── inference_worker.py   # Background DeepFace thread
-│   ├── overlay.py            # HUD rendering
-│   └── camera.py             # VideoCapture lifecycle
-├── backend/                  # FastAPI backend (v2.0)
-│   ├── main.py               # App entry point
-│   ├── config.py             # Pydantic settings
-│   ├── database.py           # SQLAlchemy engine + session
-│   ├── models/               # ORM models
-│   ├── schemas/              # Pydantic request/response schemas
-│   ├── routers/              # API route handlers
-│   ├── services/             # Business logic
-│   │   ├── biometric_service.py   # DeepFace wrapper
-│   │   └── auth_service.py        # JWT + password hashing
-│   └── tests/                # Backend pytest suite
-├── frontend/                 # React web dashboard (v2.0)
-│   ├── src/
-│   │   ├── pages/            # 9 pages
-│   │   ├── api/              # API client + hooks
-│   │   ├── components/       # Shared UI components
-│   │   └── store/            # Zustand auth state
-│   └── package.json
-├── tests/                    # v1.3 CLI pytest suite (75 tests)
-├── docs/                     # Documentation
-│   ├── ARCHITECTURE_V2.md
-│   ├── SECURITY_MODEL.md
-│   ├── DATABASE_DESIGN.md
-│   ├── LOCAL_SETUP_WINDOWS.md
-│   ├── BIOMETRIC_VALIDATION.md
-│   └── IMPLEMENTATION_STATUS.md
-├── .env.example              # Environment variable template
-├── start_backend.ps1         # Backend startup script
-├── start_frontend.ps1        # Frontend startup script
-└── requirements.txt          # v1.3 CLI dependencies
-```
-
----
-
-## How It Works
-
-### Enrolment
-
-```
-1. Admin creates user account
-2. User provides explicit biometric consent (recorded with timestamp)
-3. Webcam captures facial image
-4. Server validates: single face, quality score ≥ 0.6, liveness passes
-5. ArcFace generates a 512-dimensional embedding
-6. Embedding is encrypted with Fernet (key from EMBEDDING_ENCRYPTION_KEY)
-7. Encrypted blob stored in database — raw embedding never returned via API
-```
-
-### Verification
-
-```
-1. Client requests a session (session_id, 120s expiry, max 10 attempts)
-2. Client captures webcam frame (JPEG) and sends to server
-3. Server pipeline:
-   a. Face detection (OpenCV)
-   b. Face count: 0 → NO_FACE, >1 → MULTIPLE_FACES
-   c. Quality assessment (sharpness, brightness, face area)
-   d. Liveness check (MiniFASNet) → SPOOF_DETECTED on fail
-   e. ArcFace embedding → cosine distance vs enrolled embedding
-   f. Distance ≤ threshold (0.68) → VERIFIED, else REJECTED
-4. Result returned with explanation and session state
-5. Event logged to database
-```
-
-### Fail-closed security
-
-Any step that fails or raises an exception produces a **non-authenticated** result. The only path to `VERIFIED` is completing all steps successfully. A `VERIFIED` result expires after a configurable timeout (default 1500ms in CLI, 120s session in web).
-
----
-
-## Getting Started
-
-### Prerequisites
-
-- Windows 10 / 11 (Linux/macOS also supported with minor path changes)
-- Python 3.10+
-- Node.js 18+
-- Git
-- Webcam (for live verification)
-
-### Clone
+Prerequisites: Python 3.10, Node 22+, ~1 GB disk for model weights.
 
 ```powershell
-git clone https://github.com/TechieTojin/FaceVerification.git
-cd FaceVerification
-```
-
-### Python environment
-
-```powershell
+# 1. Python environment (never install into the global interpreter)
 python -m venv .venv
-.\.venv\Scripts\Activate.ps1
+.venv\Scripts\pip install -r backend\requirements_backend.txt
+.venv\Scripts\pip install --no-deps -r backend\requirements_mediapipe.txt
 
-# v1.3 CLI dependencies
-pip install -r requirements.txt
+# 2. Model files (MediaPipe landmarker, SHA-256 verified; DeepFace weights download on first start)
+.venv\Scripts\python scripts\fetch_models.py
 
-# v2.0 backend dependencies
-pip install -r backend\requirements_backend.txt
+# 3. Configuration
+copy .env.example .env
+#   set SECRET_KEY, EMBEDDING_ENCRYPTION_KEY, INITIAL_ADMIN_PASSWORD (commands are in .env.example)
+
+# 4. Frontend dependencies
+cd frontend; npm install; cd ..
 ```
 
-### Node dependencies
+Upgrading from 3.0: the start-up migration `0003_v4_platform` (after a SQLite backup) moves all data into a
+"Default organization", gives every user a membership with their previous role and makes existing administrators
+platform administrators. Nothing is deleted. New optional settings: `PUBLIC_BASE_URL`, `WEBAUTHN_RP_ID`,
+`WEBAUTHN_ORIGINS`, `SMTP_*` (see `.env.example`).
+
+Run (two terminals):
 
 ```powershell
-cd frontend
-npm install
-cd ..
+.\start_backend.ps1      # http://localhost:8000  (API docs at /docs)
+.\start_frontend.ps1     # http://localhost:5173
 ```
 
-### Environment configuration
+On start-up the backend applies Alembic migrations automatically, **after backing up a SQLite database to `./backups/`**. Existing v2.1 databases are detected and upgraded; v2.1 templates are kept but flagged `REENROLMENT_REQUIRED` because they came from an incompatible pipeline. To migrate explicitly: `python -m backend.manage migrate` (`check`, `backup` are also available). Container deployment: see [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
 
-```powershell
-Copy-Item .env.example .env
-```
+## Running tests
 
-Edit `.env` — the minimum required settings:
+| Suite | Command | What it covers |
+|---|---|---|
+| Backend | `.venv\Scripts\python -m pytest backend\tests` | Decision engine, policy enforcement, sessions/concurrency/replay, enrolment authorisation & approvals, RBAC matrix, auth, history/export, alerts, documents, evaluation maths, migrations (incl. populated v2.1 DB), retention. Uses an isolated temp DB and the test-only `FakeProvider`. |
+| Real models | `$env:RUN_REAL_MODEL_TESTS=1; .venv\Scripts\python -m pytest backend\tests\test_realmodel.py -s` | MediaPipe + MiniFASNet + ArcFace on public LFW images in `test_assets/`. |
+| CLI (v1.3) | `.venv\Scripts\python -m pytest tests` | Original CLI suite. |
+| Frontend unit | `cd frontend; npm test` | Guidance, API client, capture-loop concurrency, components, forms. |
+| End-to-end | `cd frontend; npx playwright install chromium; npm run e2e` | Browser scenarios against an isolated backend (fake provider + synthetic marker camera, no real faces), incl. virtual WebAuthn authenticator, desktop + phone contexts, the TypeScript SDK and a real kiosk agent process. |
+| SDK | `cd sdk\typescript; npm test` | Webhook signatures (cross-checked with the server), assertion verification, client behaviour. |
+| Offline kiosk | part of the backend suite (`backend\tests\test_devices_kiosk.py`) | Provisioning, signed requests, offline verification, sync idempotency, corruption, expiry, revocation. |
+| Real-model browser | `python scripts\make_test_videos.py; cd frontend; npx playwright test -c playwright.real.config.ts` | Production build, real in-browser MediaPipe, real server models; Chromium fake camera playing photos (presentation attacks). |
 
-```env
-# Your reference face image (for the CLI only)
-REFERENCE_IMAGE_PATH=C:\path\to\your_face.jpg
-
-# Admin account created on first backend startup
-INITIAL_ADMIN_EMAIL=admin@yourdomain.local
-INITIAL_ADMIN_PASSWORD=<choose a strong password>
-
-# JWT signing secret
-SECRET_KEY=<output of: python -c "import secrets; print(secrets.token_hex(32))">
-
-# Embedding encryption key
-EMBEDDING_ENCRYPTION_KEY=<output of: python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())">
-```
-
----
+The `FakeProvider` is refused unless `APP_ENV=test`. Results from it say nothing about biometric performance.
 
 ## Configuration
 
-All settings are loaded from `.env`. See `.env.example` for the full reference.
+Process settings come from environment variables / `.env` (see `.env.example`). Runtime verification **policy** lives in the database and is edited on the *Policy settings* page; every change creates a new version.
 
-| Variable | Default | Description |
-|---|---|---|
-| `REFERENCE_IMAGE_PATH` | — | CLI: path to reference face image |
-| `INITIAL_ADMIN_EMAIL` | — | Admin email for first-run seeding |
-| `INITIAL_ADMIN_PASSWORD` | — | Admin password (required, no default) |
-| `SECRET_KEY` | random | JWT signing key — set explicitly in production |
-| `EMBEDDING_ENCRYPTION_KEY` | — | Fernet key for embedding encryption |
-| `DATABASE_URL` | `sqlite:///./faceverification.db` | SQLAlchemy connection string |
-| `ENABLE_LIVENESS` | `true` | Enable passive anti-spoofing |
-| `RECOGNITION_MODEL` | `ArcFace` | DeepFace model |
-| `DETECTOR_BACKEND` | `opencv` | Face detector |
-| `INFERENCE_INTERVAL_MS` | `500` | CLI: ms between inferences |
-| `RESULT_EXPIRY_MS` | `1500` | CLI: VERIFIED state lifetime |
-| `LOG_LEVEL` | `INFO` | Logging verbosity |
-
----
-
-## Running the Application
-
-### Backend (FastAPI)
-
-```powershell
-# Terminal 1
-.\.venv\Scripts\Activate.ps1
-.\.venv\Scripts\python.exe -m uvicorn backend.main:app --port 8000 --reload
-```
-
-Or use the startup script:
-
-```powershell
-.\start_backend.ps1
-```
-
-Backend available at:
-- API: http://localhost:8000/api/v1/
-- Interactive docs: http://localhost:8000/docs
-
-### Frontend (React)
-
-```powershell
-# Terminal 2
-cd frontend
-.\node_modules\.bin\vite.cmd --port 5173
-```
-
-Or:
-
-```powershell
-.\start_frontend.ps1
-```
-
-Frontend available at: http://localhost:5173
-
-### Standalone CLI (v1.3)
-
-The original Python CLI works independently of the web stack:
-
-```powershell
-.\.venv\Scripts\Activate.ps1
-python face_verification.py --reference "C:\path\to\photo.jpg"
-
-# Options
-python face_verification.py --help
-python face_verification.py --reference PATH --camera INDEX
-```
-
-Press **Q** or **ESC** to exit. On first run, ArcFace (~137 MB) and anti-spoofing models (~4 MB) download automatically.
-
----
-
-## Running Tests
-
-```powershell
-.\.venv\Scripts\Activate.ps1
-
-# All tests (102)
-.\.venv\Scripts\python.exe -m pytest backend/tests/ tests/ -v
-
-# Backend only (27)
-.\.venv\Scripts\python.exe -m pytest backend/tests/ -v
-
-# v1.3 CLI only (75)
-.\.venv\Scripts\python.exe -m pytest tests/ -v
-```
-
-Test summary:
-
-| Suite | Tests | Description |
-|---|---|---|
-| `tests/` | 75 | v1.3 CLI: state machine, security, config, inference, overlay |
-| `backend/tests/` | 27 | API auth, users, enrolment, verification, dashboard |
-| **Total** | **102** | All using SQLite in-memory; no webcam or model required |
-
----
-
-## API Reference
-
-Full interactive documentation: http://localhost:8000/docs (Swagger UI)
-
-Selected endpoints:
-
-| Method | Path | Auth | Description |
-|---|---|---|---|
-| `GET` | `/api/v1/health` | None | Service health check |
-| `POST` | `/api/v1/auth/login` | None | Obtain JWT token |
-| `POST` | `/api/v1/auth/logout` | JWT | Invalidate session |
-| `GET` | `/api/v1/auth/me` | JWT | Current user |
-| `GET` | `/api/v1/users` | Admin | List users |
-| `POST` | `/api/v1/users` | Admin | Create user |
-| `POST` | `/api/v1/enrolments/{id}/consent` | Admin | Record biometric consent |
-| `POST` | `/api/v1/enrolments/{id}/enrol` | Admin | Enrol face (upload image) |
-| `DELETE` | `/api/v1/enrolments/{id}` | Admin | Revoke enrolment |
-| `POST` | `/api/v1/verification/sessions` | JWT | Start verification session |
-| `POST` | `/api/v1/verification/sessions/{id}/submit-frame` | JWT | Submit webcam frame |
-| `GET` | `/api/v1/dashboard/summary` | JWT | Dashboard statistics |
-| `GET` | `/api/v1/analytics` | JWT | Analytics data |
-| `GET` | `/api/v1/verification/events` | JWT | Verification history |
-| `GET` | `/api/v1/security/events` | JWT | Security audit log |
-| `GET/PUT` | `/api/v1/settings` | Admin | Application settings |
-
----
-
-## Security Architecture
-
-### What is implemented
-
-| Control | Description |
+| Variable | Purpose |
 |---|---|
-| Fail-closed state machine | Every error path produces a non-authenticated result |
-| Passive liveness (MiniFASNet) | Rejects many printed photos and screen replays |
-| Multiple-face rejection | Prevents simultaneous presentation attacks |
-| Result expiry | VERIFIED state has a bounded lifetime |
-| JWT authentication | HS256 tokens, configurable expiry |
-| bcrypt password hashing | Work factor 12 |
-| Fernet embedding encryption | AES-128-CBC; key managed via env var |
-| Consent recording | Timestamp and flag stored per enrolment |
-| Role-based access | Admin / Operator / Viewer |
-| No embedding exposure | Raw vectors never returned via API |
-| Audit logging | Verification events and security events persisted |
+| `SECRET_KEY` | JWT signing key (≥ 32 chars, required) |
+| `EMBEDDING_ENCRYPTION_KEY` | Fernet key for templates (required to enrol/verify; **back it up** — losing it makes all templates unreadable) |
+| `DATABASE_URL` | `sqlite:///./faceverification.db` (default) or `postgresql+psycopg://…` |
+| `APP_ENV` | `development` · `production` · `test` |
+| `COOKIE_SECURE`, `COOKIE_SAMESITE`, `CORS_ORIGINS` | Cookie/CORS hardening (set `COOKIE_SECURE=true` behind HTTPS) |
+| `INITIAL_ADMIN_EMAIL/PASSWORD/NAME` | First admin, created only when the users table is empty |
+| `INFERENCE_WORKERS`, `INFERENCE_QUEUE_LIMIT` | Inference pool size and admission limit |
+| `MODELS_DIR`, `WARMUP_MODELS` | Landmarker location; load models at start-up |
+| `AUTO_MIGRATE`, `BACKUP_DIR` | Migration on start-up and SQLite backup location |
+| `LOG_FORMAT`, `LOG_LEVEL` | `text` or `json` structured logs with request IDs |
+| `LOGIN_*` | Login rate limits and lockout |
+| `PUBLIC_BASE_URL` | Address of the web UI used in QR codes, hosted links and emails |
+| `WEBAUTHN_RP_ID`, `WEBAUTHN_ORIGINS` | Passkey relying party: the registrable domain and the exact allowed origins (IP addresses are not allowed by browsers) |
+| `SMTP_HOST/PORT/USERNAME/PASSWORD/STARTTLS/FROM` | Outbound email; empty host = email unavailable (shown as such, never faked) |
+| `WEBHOOK_ALLOW_PRIVATE_TARGETS` | Development only: allow http/private-network webhook URLs |
+| `OFFLINE_MAX_VALIDITY_HOURS` | Hard ceiling for kiosk offline validity (1–168, default 72) |
 
-### What is NOT implemented or validated
+## Security model & limitations
 
-| Gap | Notes |
-|---|---|
-| Virtual camera injection | An attacker with local access can feed synthetic video |
-| 3D mask attacks | RGB-only liveness cannot detect silicone masks |
-| High-quality photo spoofing | Passive PAD tested on low-quality prints only |
-| Alembic migrations | `create_all()` used — no migration history |
-| Per-request HTTP rate limiting | Session-level attempt limit only |
-| HTTPS enforcement | HTTP in development mode |
-| Account lockout after repeated failures | Logged but not automatically locked |
+What is enforced:
+- HttpOnly cookie auth with rotating refresh tokens (reuse revokes the family and raises an alert), double-submit CSRF, bcrypt, login rate limiting/lockout, constant-work login, token invalidation on password change.
+- Server-side RBAC on every endpoint; operators cannot enrol administrators; viewers cannot change biometric data or policy.
+- Consent attested by the subject's password; withdrawal deletes the template and blocks verification; template replacement requires admin approval.
+- Templates encrypted at rest (Fernet) with a typed header (model, dimension); dimension/model mismatch is rejected, never truncated. No face images are stored; logs never contain images, templates or secrets.
+- Session ownership, one-time frame tokens, ordered sequences, atomic attempt counting, exact-replay and frozen-feed detection, server-validated active + passive liveness.
 
-### Liveness limitation (important)
+What is **not** guaranteed:
+- **Camera origin.** A virtual camera, modified browser or injected stream can deliver arbitrary video. Challenges and anti-spoofing raise the cost of such attacks; they do not make them impossible. Deepfakes that can follow random instructions in real time are not addressed.
+- **Anti-spoofing effectiveness** is not measured here. In tests, MiniFASNet scored a raw scanned photo as REAL (1.00) but rejected the same photos when presented through the camera pipeline (SPOOF 0.51–0.82). Passive checks alone must not be relied on; keep the active challenge enabled.
+- **Accuracy (FAR/FRR)** depends on your population, cameras and threshold. On 7 public LFW images one genuine pair measured 0.701 (> 0.68 default). Use the evaluation module with representative, lawfully obtained labelled data before choosing a threshold.
+- Duplicate detection performs an internal 1:N comparison at enrolment time only (results shown to admins); there is no identification search endpoint.
+- No 3D-mask, adversarial-example or demographic-bias evaluation has been performed.
+- **Passkeys** prove possession of a credential plus the authenticator's own user verification; they do not tell the server *how* the authenticator verified the user. A face match never signs anyone in by itself.
+- **Devices and kiosks** prove possession of a key generated at provisioning, not hardware identity. Kiosk keys are protected by Windows DPAPI or a passphrase — **not** hardware-backed. A disconnected kiosk learns of revocation only when it reconnects; the offline validity period bounds that delay.
+- **QR pairing** proves nothing about the phone; the operator-confirmed code prevents a third party from completing a pairing they intercepted, and the phone's frames get the same server checks as any other.
 
-The passive anti-spoofing model (MiniFASNet) is trained to detect printed photos and screen replays under typical conditions. It has not been independently validated against high-quality photo attacks, adversarial examples, or 3D masks. Do not rely on it as the sole barrier for high-stakes authentication.
+Biometric data is regulated in many jurisdictions (GDPR, BIPA, CCPA…). Obtain legal review before processing real people's biometrics. See [SECURITY.md](SECURITY.md).
 
----
+## Desktop CLI (v1.3)
 
-## Privacy and Biometric Data
+A standalone OpenCV window that compares a webcam feed with one reference photo (`REFERENCE_IMAGE_PATH`). It uses `requirements.txt` and is unchanged since v1.3:
 
-- Facial embeddings are stored encrypted (Fernet, key in `.env`).
-- The encryption key is never logged or returned by the API.
-- Raw video frames are not stored.
-- Biometric consent is recorded with a timestamp before any enrolment.
-- Enrolments can be fully deleted via the API (embedding and consent records removed).
-- No biometric data is transmitted to third-party services.
-- Applicable laws (GDPR, BIPA, CCPA, etc.) require legal review before deployment.
+```powershell
+.venv\Scripts\pip install -r requirements.txt
+.venv\Scripts\python face_verification.py --reference C:\path\to\photo.jpg [--camera 0]
+```
 
----
+Press `Q` or `Esc` to quit. Its passive liveness is single-frame and it has no active challenge — use the web platform for anything beyond demonstration.
 
-## Known Limitations
+## Further documentation
 
-1. **SQLite only tested locally.** PostgreSQL is supported via `DATABASE_URL` but not tested.
-2. **No database migration tooling.** Schema changes require manual migration or a fresh database.
-3. **Passive liveness is not independently validated.** Do not claim spoof resistance without physical testing.
-4. **Windows-first development.** Linux/macOS paths in docs may need adjustment.
-5. **No HTTPS in development.** Production deployments require TLS.
-6. **Single reference image per user.** Multi-sample enrolment not implemented.
-7. **No demographic bias evaluation.** ArcFace accuracy varies across populations.
-8. **Camera index 0 assumed.** Multi-camera selection not implemented in CLI.
-
----
-
-## Screenshots
-
-Screenshots are pending manual capture from the running application.
-See [`docs/screenshots/README.md`](docs/screenshots/README.md) for capture instructions.
-
----
-
-## Roadmap
-
-- [ ] Alembic database migrations
-- [ ] PostgreSQL integration testing
-- [ ] Per-request rate limiting middleware
-- [ ] Account lockout after repeated failed attempts
-- [ ] Multi-sample enrolment (average embedding)
-- [ ] Active liveness challenges (head movement)
-- [ ] Independent anti-spoofing evaluation
-- [ ] HTTPS / TLS setup guide
-- [ ] Docker Compose configuration
-- [ ] Demographic accuracy evaluation
-- [ ] Reference embedding re-encryption on key rotation
-- [ ] Playwright end-to-end tests
-
----
-
-## Contributing
-
-Contributions are welcome. Please read [CONTRIBUTING.md](CONTRIBUTING.md) before opening a pull request.
-
-**Before contributing:**
-- Do not commit `.env` files, real biometric data, or face images.
-- Do not weaken verification thresholds without documented justification.
-- All new features must include tests.
-- Security-sensitive changes require a description of the threat model impact.
-
----
-
-## License
-
-MIT License — see [LICENSE](LICENSE) if present.
-
----
-
-## Acknowledgements
-
-- [DeepFace](https://github.com/serengil/deepface) — face recognition and liveness framework
-- [ArcFace](https://arxiv.org/abs/1801.07698) — recognition model
-- [MiniFASNet](https://github.com/minivision-ai/Silent-Face-Anti-Spoofing) — passive anti-spoofing
-- [FastAPI](https://fastapi.tiangolo.com) — backend framework
-- [Labeled Faces in the Wild](http://vis-www.cs.umass.edu/lfw/) — used for automated integration testing
+- [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) — production configuration, Docker/Compose, PostgreSQL, TLS, backups and recovery.
+- [docs/V4_FEATURES.md](docs/V4_FEATURES.md) — v4 features, design decisions and limits.
+- [docs/V4_TEST_REPORT.md](docs/V4_TEST_REPORT.md) — v4 test and visual-inspection results.
+- [docs/V3_TEST_REPORT.md](docs/V3_TEST_REPORT.md) — v3 results.
+- [sdk/typescript/README.md](sdk/typescript/README.md) — integration SDK.
+- [SECURITY.md](SECURITY.md) — threat model and hardening checklist.
+- Files in `docs/` named `*V2*`, `*V1_3*`, `PROJECT_ANALYSIS_REPORT.md`, `ISSUES_AND_RISKS.md` etc. describe earlier versions and are kept for history.
