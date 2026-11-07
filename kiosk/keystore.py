@@ -10,7 +10,6 @@ from __future__ import annotations
 import ctypes
 import os
 import sys
-from ctypes import wintypes
 
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from cryptography.hazmat.primitives.kdf.scrypt import Scrypt
@@ -21,7 +20,9 @@ class KeyProtectionError(RuntimeError):
 
 
 class _Blob(ctypes.Structure):
-    _fields_ = [("cbData", wintypes.DWORD), ("pbData", ctypes.POINTER(ctypes.c_char))]
+    # DATA_BLOB. DWORD is a 32-bit unsigned integer; `ctypes.wintypes` is not imported because it
+    # raises ValueError on non-Windows Python < 3.12, which would break importing this module on Linux.
+    _fields_ = [("cbData", ctypes.c_uint32), ("pbData", ctypes.POINTER(ctypes.c_char))]
 
 
 def _dpapi(data: bytes, protect: bool) -> bytes:

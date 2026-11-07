@@ -47,7 +47,8 @@ frontend/.vite/
 test_*.db
 
 # v3: model files are downloaded by scripts/fetch_models.py — never commit weights
-models/
+# Anchored to the repository root: an unanchored `models/` also matched backend/models/ (SQLAlchemy source).
+/models/
 *.task
 *.onnx
 *.h5
